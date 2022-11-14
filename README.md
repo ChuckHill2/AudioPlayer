@@ -25,3 +25,5 @@ State is maintained across audio clips.
 This is not thread-safe. Limitations of WinMM.
 
 Written in C# with Visual Studio 2019 and .Net Framework 4.8.
+
+The reason I created this is because I needed a way to play short alert mp3 sound clips in another project. Something that does not require yet another dll and is succinct and easy to use.
