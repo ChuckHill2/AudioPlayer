@@ -37,6 +37,10 @@ using System.Text;
 using System.Windows.Forms;
 using Microsoft.Win32;
 
+// =======================================================================
+// This file has NO external dependencies as such this file may be reused anywhere.
+// =======================================================================
+
 namespace ChuckHill2.Forms
 {
     /// <summary>
@@ -193,7 +197,7 @@ namespace ChuckHill2.Forms
         }
         #endregion
 
-        private Control Owner = null;
+        private Form Owner = null;
         private Control NotificationHandlerControl = null;
         private readonly string MediaAlias;
 
@@ -287,7 +291,7 @@ namespace ChuckHill2.Forms
         /// AudioPlayer Constructor.
         /// </summary>
         /// <param name="owner">The owner of our child control that will be our notification message pump.</param>
-        public AudioPlayer(Control owner)
+        public AudioPlayer(Form owner)
         {
             Owner = owner;
             //Create a unique alias to allow multiple instances to run and not interfere with each other.
@@ -303,6 +307,9 @@ namespace ChuckHill2.Forms
             if (Initialized) return;
             Initialized = true;
 
+            if (Owner == null) Owner = Application.OpenForms.Count > 0 ? Application.OpenForms[0] : null;
+            if (Owner != null) Owner.FormClosed += Owner_FormClosed;
+
             // Sole purpose of this control is to recieve the notification window message, thus this control is never busy.
             // The only messages  this control recieves is WM_Create, MM_MCINOTIFY, and WM_DESTROY.
             // This is better than inserting an intercept WndProc into the very busy owning form while ignoring 99.999% of the messages.
@@ -314,6 +321,8 @@ namespace ChuckHill2.Forms
             base.AssignHandle(NotificationHandlerControl.Handle);
         }
 
+        private void Owner_FormClosed(object sender, FormClosedEventArgs e) => this.Dispose();
+
         /// <summary>
         /// Dispose this instance of AudioPlayer
         /// </summary>
@@ -322,6 +331,7 @@ namespace ChuckHill2.Forms
             Debug.WriteLine($"AudioPlayer.Dispose handler exists={NotificationHandlerControl != null}");
             if (NotificationHandlerControl != null)
             {
+                if (Owner != null) Owner.FormClosed -= Owner_FormClosed;
                 this.ReleaseHandle();
                 NotificationHandlerControl.Dispose();
                 NotificationHandlerControl = null;
@@ -334,6 +344,7 @@ namespace ChuckHill2.Forms
             }
         }
         ~AudioPlayer() => Dispose();
+        
 
         //The notification handler.
         protected override void WndProc(ref Message m)
@@ -864,6 +875,89 @@ namespace ChuckHill2.Forms
             catch
             {
                 return new string[0];
+            }
+        }
+
+        /// <summary>
+        /// Just get the media file duration. (Is this thread safe???)
+        /// Warning: MediaDuration() and WaveDuration() results may be mismatched by 1ms due to rounding.
+        /// </summary>
+        /// <param name="mediafile"></param>
+        /// <returns>Duration in milliseconds or 0 upon error.</returns>
+        public static int MediaDuration(string mediafile)
+        {
+            if (mediafile == null) throw new ArgumentNullException(nameof(mediafile));
+            var alias = "MD" + (DateTime.Now.Ticks / TimeSpan.TicksPerMillisecond).ToString("X8");
+            if (mciSendString($"open \"{mediafile}\" type mpegvideo alias {alias}", null, 0, IntPtr.Zero) == 0)
+            {
+                var sb = new StringBuilder(128);
+                mciSendString($"status {alias} length", sb, 128, IntPtr.Zero);
+                mciSendString($"close {alias}", null, 0, IntPtr.Zero);
+                return int.TryParse(sb.ToString(), out var i) ? i : 0;
+            }
+            return 0;
+        }
+
+        /// <summary>
+        /// Get thread-safe duration of a wav file in ms.
+        /// Warning: MediaDuration() and WaveDuration() results may be mismatched by 1ms due to rounding.
+        /// </summary>
+        /// <returns>ms duration or 0 upon error</returns>
+        public static int WaveDuration(string wavFile)
+        {
+            return new WaveHeader(wavFile).AudioDuration();
+        }
+
+        private class WaveHeader
+        {
+            //http://soundfile.sapp.org/doc/WaveFormat/
+            private const int MagicID = 0x46464952; //="RIFF"
+            private const int WaveChunkHeaderID = 0x45564157; //=“WAVE”
+            private const int FmtSubChunkHeaderID = 0x20746d66; //="fmt "
+            private const int DataSubChunkHeaderID = 0x61746164; //="data " or  "atad" (0x64617461) big-endian form
+
+            public readonly int Magic;             //="RIFF"
+            public readonly int FileSize;          //Size of the overall file - 8 bytes, in bytes (32-bit integer). 
+            public readonly int WaveChunkHeader;   //="wave". Type Header. For our purposes, it always equals “WAVE”.
+            public readonly int FmtSubChunkHeader; //Format chunk marker == "fmt "
+            public readonly int FmtSize;           //Length of 'fmt ' chunk
+            public readonly short AudioFormat;     //Type of format (1 is PCM)
+            public readonly short NumChannels;     //1=Mono, 2=Stereo, etc 
+            public readonly int SampleRate;        //Common values are 44100 (CD), 48000 (DAT). Sample Rate = Number of Samples per second, or Hertz.
+            public readonly int ByteRate;          //== SampleRate * NumChannels * BitsPerSample/8
+            public readonly short BlockAlign;      //== NumChannels * BitsPerSample/8
+            public readonly short BitsPerSample;   //8 bits = 8, 16 bits = 16, etc.
+            public readonly int DataSubChunkHeader; //=“data” chunk header. Marks the beginning of the data section.
+            public readonly int DataSize;           //Size of the following data.
+
+            public int AudioDuration()
+            {
+                if (Magic != MagicID || WaveChunkHeader != WaveChunkHeaderID || FmtSubChunkHeader != FmtSubChunkHeaderID) return 0;
+                return (int)(DataSize / (SampleRate * NumChannels * BitsPerSample / 8.0) * 1000 + 0.5);
+            }
+
+            public WaveHeader(string wavFile)
+            {
+                using (var fs = new FileStream(wavFile, FileMode.Open, FileAccess.Read, FileShare.ReadWrite, 4096, FileOptions.SequentialScan))
+                {
+                    if (fs.Length < 44) return;  //sizeof(WaveHeader)
+                    using (var br = new BinaryReader(fs))
+                    {
+                        Magic = br.ReadInt32();
+                        FileSize = br.ReadInt32();
+                        WaveChunkHeader = br.ReadInt32();
+                        FmtSubChunkHeader = br.ReadInt32();
+                        FmtSize = br.ReadInt32();
+                        AudioFormat = br.ReadInt16();
+                        NumChannels = br.ReadInt16();
+                        SampleRate = br.ReadInt32();
+                        ByteRate = br.ReadInt32();
+                        BlockAlign = br.ReadInt16();
+                        BitsPerSample = br.ReadInt16();
+                        DataSubChunkHeader = br.ReadInt32();
+                        DataSize = br.ReadInt32();
+                    }
+                }
             }
         }
     }
