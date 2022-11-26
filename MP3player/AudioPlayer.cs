@@ -1,4 +1,5 @@
-﻿//--------------------------------------------------------------------------
+﻿//#undef DEBUG
+//--------------------------------------------------------------------------
 // <summary>
 //   
 // </summary>
@@ -112,7 +113,7 @@ namespace ChuckHill2.Forms
 
     /// <summary>
     /// A friendly interface to the audio device of the WinMM dll.
-    /// This is NOT thread-safe as it uses the Windows message pump for notifications.
+    /// This is NOT thread-safe. In addition, it must run on the same thread as the application Forms UI. This is a constraint of WinMM itself.
     /// However multiple instances of AudioPlayer may be allowed (not tested!).
     /// </summary>
     public class AudioPlayer : NativeWindow, IDisposable
@@ -289,8 +290,9 @@ namespace ChuckHill2.Forms
 
         /// <summary>
         /// AudioPlayer Constructor.
+        /// This is NOT thread-safe. In addition, this must run on the same thread as the application Forms UI. This is a constraint of WinMM itself.
         /// </summary>
-        /// <param name="owner">The owner of our child control that will be our notification message pump.</param>
+        /// <param name="owner">The owner of our child control that will be our notification message pump. If null, it uses the top-level form as the owner.</param>
         public AudioPlayer(Form owner)
         {
             Owner = owner;
@@ -508,8 +510,8 @@ namespace ChuckHill2.Forms
         {
             if (this.State() == MCIState.Stopped)
             {
-                if (volume !=- 1) this.MasterVolume = volume;
-                MciSendCommand($"play {MediaAlias} {(continuous ? " REPEAT" : "")} notify");
+                if (volume !=-1) this.MasterVolume = volume;
+                MciSendCommand($"play {MediaAlias}{(continuous ? " repeat" : "")} notify");
             }
         }
 
@@ -879,7 +881,8 @@ namespace ChuckHill2.Forms
         }
 
         /// <summary>
-        /// Just get the media file duration. (Is this thread safe???)
+        /// Get the media file duration in ms.
+        /// This is NOT thread-safe. In addition, it must run on the same thread as the application Forms UI.
         /// Warning: MediaDuration() and WaveDuration() results may be mismatched by 1ms due to rounding.
         /// </summary>
         /// <param name="mediafile"></param>
@@ -899,7 +902,8 @@ namespace ChuckHill2.Forms
         }
 
         /// <summary>
-        /// Get thread-safe duration of a wav file in ms.
+        /// Get the duration of a wav file in ms.
+        /// This is completely thread-safe and may run on simultaneously on any thread.
         /// Warning: MediaDuration() and WaveDuration() results may be mismatched by 1ms due to rounding.
         /// </summary>
         /// <returns>ms duration or 0 upon error</returns>
